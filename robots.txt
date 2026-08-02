@@ -1,0 +1,4 @@
+# Not a public web page - this is a private tool for one person's phone.
+# Keeps the app and the catalogue file out of search results.
+User-agent: *
+Disallow: /
