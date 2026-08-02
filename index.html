@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Wildflower Barcodes</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Barcodes">
+<meta name="theme-color" content="#101418">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+  :root {
+    --bg: #101418; --panel: #1a2027; --line: #2a323c;
+    --text: #eef2f6; --dim: #8d99a6; --accent: #4ea1ff;
+    --safe-t: env(safe-area-inset-top); --safe-b: env(safe-area-inset-bottom);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overscroll-behavior-y: none;
+  }
+  .screen { display: none; height: 100%; flex-direction: column; }
+  .screen.active { display: flex; }
+
+  /* ---- unlock ---- */
+  #unlock { justify-content: center; align-items: center; padding: 24px; text-align: center; }
+  #unlock h1 { font-size: 22px; margin: 0 0 4px; }
+  #unlock p { color: var(--dim); margin: 0 0 24px; font-size: 14px; }
+  #passcode {
+    font-size: 20px; padding: 14px 16px; width: 100%; max-width: 320px;
+    border-radius: 12px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); text-align: center;
+  }
+  button.primary {
+    margin-top: 14px; font-size: 17px; font-weight: 600; padding: 14px 28px;
+    border-radius: 12px; border: 0; background: var(--accent); color: #04121f;
+    width: 100%; max-width: 320px;
+  }
+  button.primary:disabled { opacity: .5; }
+  #unlockMsg { margin-top: 14px; font-size: 14px; min-height: 20px; color: #ff8a8a; }
+
+  /* ---- search ---- */
+  header {
+    padding: calc(var(--safe-t) + 10px) 12px 10px; background: var(--bg);
+    border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2;
+  }
+  #q {
+    width: 100%; font-size: 17px; padding: 12px 14px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  }
+  #meta { display: flex; justify-content: space-between; gap: 8px;
+          font-size: 12px; color: var(--dim); margin-top: 8px; }
+  #meta button { background: none; border: 0; color: var(--accent); font-size: 12px; padding: 0; }
+  #results { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+             padding-bottom: calc(var(--safe-b) + 12px); }
+  .row { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .row .t { font-size: 15px; }
+  .row .m { font-size: 12px; color: var(--dim); margin-top: 3px;
+            font-family: Menlo, Consolas, monospace; }
+  .empty { padding: 40px 20px; text-align: center; color: var(--dim); font-size: 14px; }
+
+  /* ---- barcode ---- */
+  #show { background: #fff; color: #000; }
+  #showBar {
+    display: flex; align-items: center; gap: 10px;
+    padding: calc(var(--safe-t) + 8px) 12px 8px; background: #fff;
+    border-bottom: 1px solid #ddd;
+  }
+  #back, #rotate { background: none; border: 0; font-size: 17px; color: #0066cc; padding: 6px 0; }
+  #rotate { font-size: 14px; }
+  #showTitle { font-size: 13px; color: #444; flex: 1; text-align: center;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #code { flex: 1; display: flex; flex-direction: column; justify-content: center;
+          align-items: center; padding: 12px 8px calc(var(--safe-b) + 12px); background: #fff; }
+  #svgWrap { width: 100%; }
+  #code svg { display: block; width: 100%; }
+  /* Sideways: the symbol runs along the phone's long axis, ~40% longer.
+     Sized so the rotated result fits both the height and the width. */
+  #code.rot #svgWrap { width: min(74vh, 190vw); transform: rotate(90deg); }
+  #code.rot #showMeta, #code.rot #tip { display: none; }
+  #showMeta { margin-top: 14px; font-size: 12px; color: #666; text-align: center; }
+  #tip { margin-top: 6px; font-size: 11px; color: #999; text-align: center; }
+</style>
+</head>
+<body>
+
+<section id="unlock" class="screen active">
+  <h1>Wildflower Barcodes</h1>
+  <p>Enter your passcode to unlock the catalogue.<br>You only need to do this once on this phone.</p>
+  <input id="passcode" type="password" inputmode="text" autocomplete="off"
+         autocapitalize="off" autocorrect="off" placeholder="Passcode">
+  <button id="unlockBtn" class="primary">Unlock</button>
+  <div id="unlockMsg"></div>
+</section>
+
+<section id="search" class="screen">
+  <header>
+    <input id="q" type="search" placeholder="Search product or barcode"
+           autocomplete="off" autocapitalize="off" autocorrect="off" enterkeyhint="search">
+    <div id="meta"><span id="status"></span><button id="resync">Sync now</button></div>
+  </header>
+  <div id="results"></div>
+</section>
+
+<section id="show" class="screen">
+  <div id="showBar">
+    <button id="back">‹ Back</button>
+    <div id="showTitle"></div>
+    <button id="rotate">Rotate</button>
+  </div>
+  <div id="code">
+    <div id="svgWrap"></div>
+    <div id="showMeta"></div>
+    <div id="tip">Turn screen brightness fully up. Hold flat, 10–15cm from the scanner.</div>
+  </div>
+</section>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
