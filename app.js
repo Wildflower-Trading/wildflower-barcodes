@@ -195,7 +195,12 @@ async function openBarcode(p) {
   $("showTitle").textContent = p.t;
   paintBarcode();
   const label = { EAN13: "EAN-13", UPCA: "UPC-A", EAN8: "EAN-8" }[p.y] || p.y;
-  $("showMeta").textContent = `${label} · ${p.s}`;
+  // p.d means the retail barcode was reconstructed from an outer-case code in
+  // Linnworks rather than read from it. Say so, because if a till rejects it
+  // this is the first thing worth knowing.
+  $("showMeta").textContent = p.d
+    ? `${label} · ${p.s} · derived from case code ${p.d}`
+    : `${label} · ${p.s}`;
   showScreen("show");
   try {
     if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");

@@ -2,7 +2,7 @@
    The product data is not cached here - app.js decrypts it once and keeps the
    plaintext in localStorage, so search works offline regardless. */
 
-const CACHE = "wf-barcodes-20260805152401";
+const CACHE = "wf-barcodes-20260805152743";
 const SHELL = [
   "./",
   "./index.html",
