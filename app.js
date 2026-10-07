@@ -1,14 +1,17 @@
 import { renderBarcode } from "./barcode.js";
+import { initWalk } from "./walk.js";
 
 const STORE_KEY = "wf.catalogue.v1";
 const PASS_KEY = "wf.pass.v1";
 const MAC_SALT = "wildflower-barcodes-mac";
 
 let PRODUCTS = [];
+let COSTCO = {};
 let BUILT = null;
 
 const $ = (id) => document.getElementById(id);
-const screens = { unlock: $("unlock"), search: $("search"), show: $("show") };
+const screens = { unlock: $("unlock"), search: $("search"), show: $("show"),
+                  walk: $("walk"), walkList: $("walkList") };
 
 function showScreen(name) {
   for (const [k, el] of Object.entries(screens)) el.classList.toggle("active", k === name);
@@ -77,6 +80,7 @@ function loadLocal() {
     if (!raw) return false;
     const data = JSON.parse(raw);
     PRODUCTS = data.products || [];
+    COSTCO = data.costco || {};
     BUILT = data.built || null;
     return PRODUCTS.length > 0;
   } catch (e) {
@@ -87,7 +91,7 @@ function loadLocal() {
 function saveLocal(data) {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(
-      { built: data.built, count: data.count, products: data.products }));
+      { built: data.built, count: data.count, products: data.products, costco: data.costco || {} }));
   } catch (e) {
     console.warn("could not persist catalogue", e);
   }
@@ -111,6 +115,7 @@ async function backgroundSync(pass) {
     const data = await decryptCatalogue(envelope, pass);
     if (data.built !== BUILT) {
       PRODUCTS = data.products;
+      COSTCO = data.costco || {};
       BUILT = data.built;
       saveLocal(data);
       render($("q").value);
@@ -233,6 +238,7 @@ async function attemptUnlock(pass) {
     const envelope = await fetchEnvelope();
     const data = await decryptCatalogue(envelope, pass);
     PRODUCTS = data.products;
+    COSTCO = data.costco || {};
     BUILT = data.built;
     saveLocal(data);
     await start(pass);
@@ -284,6 +290,12 @@ function init() {
     }
     const pass = localStorage.getItem(PASS_KEY);
     if (pass) { setStatus("Syncing…"); backgroundSync(pass); }
+  });
+
+  initWalk({
+    lookup: (code) => COSTCO[code] || null,
+    built: () => BUILT,
+    showScreen,
   });
 
   const savedPass = localStorage.getItem(PASS_KEY);
