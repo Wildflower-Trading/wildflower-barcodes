@@ -358,6 +358,50 @@ async function exportWalk() {
   $("walkListMsg").textContent = `Downloaded ${all.length} scans.`;
 }
 
+/* ---------------------------------------------------------------- office */
+
+const OFFICE_URL = "https://wildflower-gateway.tail9d1c28.ts.net/walk";
+
+/* Post the walk to the gateway, which saves it and runs the review. The
+   handhelds have no email, so this is the normal way home for a walk. */
+async function sendToOffice() {
+  const msg = $("walkListMsg");
+  const all = (await dbAll()).sort((a, b) => (a.ts < b.ts ? -1 : 1));
+  if (!all.length) { msg.textContent = "Nothing to send."; return; }
+  if (!navigator.onLine) { msg.textContent = "No connection. Try again on wi-fi; the scans are safe here."; return; }
+  const btn = $("walkSend");
+  btn.disabled = true;
+  msg.textContent = `Sending ${all.length} scans…`;
+  try {
+    const payload = {
+      kind: "wildflower-costco-walk", v: 2,
+      exported: new Date().toISOString(), catalogue_built: ctx.built(),
+      count: all.length, scans: all,
+    };
+    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+    const tag = await ctx.sign(bytes);
+    const res = await fetch(OFFICE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Walk-Mac": tag },
+      body: bytes,
+    });
+    const out = await res.json().catch(() => ({}));
+    if (res.ok && out.ok) {
+      msg.textContent = `Office has it: ${out.scans} scans received. The review runs by itself.`;
+    } else if (res.status === 401) {
+      msg.textContent = "The office refused it (passcode mismatch). Re-enter the passcode on the search screen and try again.";
+    } else {
+      msg.textContent = `The office could not take it (HTTP ${res.status}). Scans are still safe here.`;
+    }
+  } catch (e) {
+    msg.textContent = e && e.message === "NO_PASSCODE"
+      ? "Unlock the catalogue first, then send again."
+      : "Could not reach the office. Check wi-fi and try again; the scans are safe here.";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* ---------------------------------------------------------------- wiring */
 
 export function initWalk(context) {
@@ -430,6 +474,7 @@ export function initWalk(context) {
   });
 
   $("walkExport").addEventListener("click", exportWalk);
+  $("walkSend").addEventListener("click", sendToOffice);
   $("walkDownload").addEventListener("click", downloadWalk);
 
   $("walkClear").addEventListener("click", async () => {

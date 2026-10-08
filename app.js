@@ -305,6 +305,17 @@ function init() {
     },
     built: () => BUILT,
     showScreen,
+    // Signs a walk export for the office receiver with the same passcode-
+    // derived HMAC key the catalogue's own integrity tag uses.
+    sign: async (bytes) => {
+      const pass = localStorage.getItem(PASS_KEY);
+      if (!pass) throw new Error("NO_PASSCODE");
+      const keyBits = await pbkdf2(pass, enc.encode(MAC_SALT), 250000, 256);
+      const key = await crypto.subtle.importKey(
+        "raw", keyBits, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+      const tag = new Uint8Array(await crypto.subtle.sign("HMAC", key, bytes));
+      return Array.from(tag, (b) => b.toString(16).padStart(2, "0")).join("");
+    },
   });
 
   const savedPass = localStorage.getItem(PASS_KEY);
