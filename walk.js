@@ -71,7 +71,8 @@ const dbClear = () => tx("readwrite", (s) => s.clear());
    item number padded with a leading zero. Linnworks holds it unpadded. */
 export function normaliseCode(raw) {
   const digits = String(raw || "").replace(/\D/g, "").replace(/^0+/, "");
-  return digits.length >= 4 && digits.length <= 8 ? digits : null;
+  // Costco item numbers run from 3 digits (Wrigley's 758) to 7 (1920491).
+  return digits.length >= 3 && digits.length <= 8 ? digits : null;
 }
 
 function gs1Check(body) {
