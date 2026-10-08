@@ -6,23 +6,18 @@
    up in the catalogue it already holds, so it works with no signal, and keeps
    one record per sign scanned.
 
-   Two ways to scan:
-
-   GUN (Zebra TC26 / TC27, the normal way). The handheld's own scanner types
-   whatever it reads into the focused text box and presses Enter, exactly like
-   a keyboard. The app keeps a text box focused the whole time, so the walk is
+   Built for the Zebra TC26 / TC27. The handheld's own scanner types whatever
+   it reads into the focused text box and presses Enter, exactly like a
+   keyboard. The app keeps a text box focused the whole time, so the walk is
    just point and pull. For a sign that comes up red (not in Linnworks) the app
    asks for a second scan of the product's own barcode: that EAN either matches
    a product we already hold (so the Costco code just needs updating in
-   Linnworks) or it does not (a genuinely new line).
-
-   CAMERA (iPhone). ZXing (public/zxing.js) decodes from the camera and a small
-   photo of each sign is kept instead of the EAN scan. */
+   Linnworks) or it does not (a genuinely new line). Everything is saved on the
+   device; export when back on wi-fi. */
 
 const DB_NAME = "wf-walk";
 const DB_VER = 1;
 const STORE = "scans";
-const GUN_KEY = "wf.walk.gun";
 
 const STATUS = {
   held:    { label: "STOCKED",            hint: "held in the warehouse",         cls: "ok" },
@@ -32,12 +27,7 @@ const STATUS = {
 };
 
 let ctx = null;          // { lookup(code), lookupEan(ean), built(), showScreen(name) }
-let reader = null;
-let scanning = false;
-let gunMode = false;
 let pendingUnknown = null;   // code waiting for a product-barcode scan (gun mode)
-let lastCode = null;
-let lastAt = 0;
 let wakeLock = null;
 let audio = null;
 let gunTimer = null;
@@ -130,17 +120,6 @@ function beep(status) {
   } catch (e) { /* no audio - the colour band still tells the story */ }
 }
 
-function snapshot() {
-  const v = $("walkVideo");
-  if (!v || !v.videoWidth) return null;
-  const w = 480;
-  const h = Math.round(v.videoHeight * w / v.videoWidth);
-  const c = document.createElement("canvas");
-  c.width = w; c.height = h;
-  c.getContext("2d").drawImage(v, 0, 0, w, h);
-  return c.toDataURL("image/jpeg", 0.5);
-}
-
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -165,7 +144,7 @@ function showResult(rec, repeat) {
     ? rec.skus.map((e) =>
         `<div class="sku"><span class="t">${esc(e.t)}</span>
          <span class="m">${esc(e.s)} · held ${e.held}${e.qc ? " · Costco pick " + e.qc : ""} · cost £${Number(e.c || 0).toFixed(2)}</span></div>`).join("")
-    : `<div class="sku"><span class="m">Nothing in Linnworks carries item ${esc(rec.code)}.${rec.thumb ? " Photo kept for the review." : ""}</span></div>`;
+    : `<div class="sku"><span class="m">Nothing in Linnworks carries item ${esc(rec.code)}.</span></div>`;
   card.innerHTML =
     `<div class="band">${st.label}<span class="code">${esc(rec.code)}</span>${repeat ? '<span class="rep">already scanned</span>' : ""}</div>
      <div class="hint">${st.hint}</div>${lines}${eanLine(rec)}`;
@@ -186,9 +165,6 @@ function setGunPrompt() {
 async function handleCode(raw, source) {
   const code = normaliseCode(raw);
   if (!code) return;
-  const now = Date.now();
-  if (source === "camera" && code === lastCode && now - lastAt < 2500) { lastAt = now; return; }
-  lastCode = code; lastAt = now;
   pendingUnknown = null;
 
   const existing = await dbGet(code);
@@ -197,7 +173,7 @@ async function handleCode(raw, source) {
     await dbPut(existing);
     showResult(existing, true);
     beep(existing.status);
-    if (gunMode && existing.status === "unknown" && !existing.ean) pendingUnknown = code;
+    if (existing.status === "unknown" && !existing.ean) pendingUnknown = code;
     setGunPrompt();
     return;
   }
@@ -208,7 +184,7 @@ async function handleCode(raw, source) {
     ts: new Date().toISOString(),
     status,
     skus: summarise(entries),
-    thumb: source === "camera" ? snapshot() : null,
+    thumb: null,
     source,
     manual: source === "typed",
     seen: 1,
@@ -216,7 +192,7 @@ async function handleCode(raw, source) {
   await dbPut(rec);
   showResult(rec, false);
   beep(status);
-  if (gunMode && status === "unknown") pendingUnknown = code;
+  if (status === "unknown") pendingUnknown = code;
   setGunPrompt();
   refreshCount();
 }
@@ -253,63 +229,19 @@ function gunCommit() {
 }
 
 function gunFocus() {
-  if (!gunMode) return;
   const inp = $("gunInput");
   if (document.activeElement !== inp) { try { inp.focus({ preventScroll: true }); } catch (e) {} }
 }
 
-function applyMode() {
-  $("walkCam").style.display = gunMode ? "none" : "";
-  $("gunPanel").style.display = gunMode ? "" : "none";
-  $("walkMode").textContent = gunMode ? "Gun" : "Camera";
-  $("walkManualWrap").style.display = gunMode ? "none" : "";
-  if (gunMode) {
-    stopCamera();
-    setGunPrompt();
-    gunFocus();
-  }
-}
+/* ---------------------------------------------------------------- wake */
 
-/* ---------------------------------------------------------------- camera */
-
-async function startCamera() {
-  if (scanning || gunMode) return;
-  const msg = $("walkMsg");
-  if (!window.ZXing) { msg.textContent = "Scanner library missing. Sync on wi-fi once, then try again."; return; }
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    msg.textContent = "This browser gives no camera access. Open the app from the home-screen icon.";
-    return;
-  }
-  msg.textContent = "Starting camera…";
+async function keepAwake() {
   try {
-    const hints = new Map();
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,
-      [ZXing.BarcodeFormat.CODE_39, ZXing.BarcodeFormat.CODE_128]);
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-    reader = new ZXing.BrowserMultiFormatReader(hints, 250);
-    const constraints = { video: { facingMode: "environment",
-                                   width: { ideal: 1920 }, height: { ideal: 1080 } } };
-    await reader.decodeFromConstraints(constraints, $("walkVideo"), (result, err) => {
-      if (result) handleCode(result.getText(), "camera");
-      // err is NotFoundException on every frame without a code - expected.
-    });
-    scanning = true;
-    msg.textContent = "";
-    $("walkStart").style.display = "none";
-    try {
-      if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
-    } catch (e) { /* harmless */ }
-  } catch (e) {
-    msg.textContent = e && e.name === "NotAllowedError"
-      ? "Camera access was refused. Allow it in the browser's site settings, then try again."
-      : "Could not start the camera: " + (e && e.message ? e.message : e);
-  }
+    if ("wakeLock" in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request("screen");
+  } catch (e) { /* not supported or denied: the device's own timeout applies */ }
 }
 
-function stopCamera() {
-  if (reader) { try { reader.reset(); } catch (e) {} reader = null; }
-  scanning = false;
-  $("walkStart").style.display = "";
+function releaseAwake() {
   if (wakeLock) { try { wakeLock.release(); } catch (e) {} wakeLock = null; }
 }
 
@@ -342,9 +274,8 @@ async function renderList() {
     const held = first
       ? "held " + r.skus.reduce((a, e) => a + e.held, 0) + " · Costco pick " + r.skus.reduce((a, e) => a + (e.qc || 0), 0)
       : "";
-    const img = r.thumb ? `<img src="${r.thumb}" alt="">` : `<div class="noimg">${r.source === "gun" ? "gun" : "typed"}</div>`;
     return `<div class="row walk-row ${STATUS[r.status].cls}" data-code="${esc(r.code)}">
-      ${img}
+      <div class="noimg">${r.source === "typed" ? "typed" : "gun"}</div>
       <div class="body">
         <div class="t">${esc(r.code)} · ${STATUS[r.status].label}</div>
         <div class="m">${desc}</div>
@@ -411,33 +342,21 @@ async function exportWalk() {
 
 export function initWalk(context) {
   ctx = context;
-  gunMode = localStorage.getItem(GUN_KEY) === "1";
 
   $("walkOpen").addEventListener("click", async () => {
     ctx.showScreen("walk");
     $("walkResult").className = "walk-result";
-    $("walkResult").innerHTML = `<div class="hint">${gunMode
-      ? "Pull the trigger on the barcode in the corner of a shelf sign."
-      : "Point the camera at the barcode in the corner of a shelf sign."}</div>`;
+    $("walkResult").innerHTML = `<div class="hint">Pull the trigger on the barcode in the corner of a shelf sign.</div>`;
     pendingUnknown = null;
-    applyMode();
+    setGunPrompt();
     await refreshCount();
-    if (!gunMode) startCamera();
+    keepAwake();
+    gunFocus();
   });
-
-  $("walkMode").addEventListener("click", () => {
-    gunMode = !gunMode;
-    localStorage.setItem(GUN_KEY, gunMode ? "1" : "0");
-    pendingUnknown = null;
-    applyMode();
-    if (!gunMode) startCamera();
-  });
-
-  $("walkStart").addEventListener("click", startCamera);
 
   $("walkBack").addEventListener("click", () => {
-    stopCamera();
     pendingUnknown = null;
+    releaseAwake();
     ctx.showScreen("search");
   });
 
@@ -452,7 +371,7 @@ export function initWalk(context) {
     if (gun.value.trim().length >= 5) gunTimer = setTimeout(gunCommit, 300);
   });
   gun.addEventListener("blur", () => {
-    if (!gunMode || !$("walk").classList.contains("active")) return;
+    if (!$("walk").classList.contains("active")) return;
     setTimeout(() => {
       const a = document.activeElement;
       if (a && (a.tagName === "INPUT" || a.tagName === "BUTTON")) return;
@@ -472,7 +391,6 @@ export function initWalk(context) {
   });
 
   $("walkListBtn").addEventListener("click", async () => {
-    stopCamera();
     $("walkListMsg").textContent = "";
     await renderList();
     ctx.showScreen("walkList");
@@ -480,7 +398,7 @@ export function initWalk(context) {
 
   $("walkListBack").addEventListener("click", () => {
     ctx.showScreen("walk");
-    if (gunMode) gunFocus(); else startCamera();
+    gunFocus();
   });
 
   $("walkRows").addEventListener("click", async (e) => {
@@ -502,9 +420,9 @@ export function initWalk(context) {
     refreshCount();
   });
 
-  // Leaving the app mid-walk: release the camera, the list is already saved.
+  // Coming back to the app mid-walk: the list is already saved, just pick up
+  // the scanner focus and the wake lock again (Android drops it on hide).
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && scanning) stopCamera();
-    if (!document.hidden && gunMode && $("walk").classList.contains("active")) gunFocus();
+    if (!document.hidden && $("walk").classList.contains("active")) { keepAwake(); gunFocus(); }
   });
 }
