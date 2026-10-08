@@ -317,6 +317,17 @@ function init() {
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
+    // A new build of the app takes over in the background. Reload once so
+    // the user sees it straight away, but never in the middle of a walk.
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloaded) return;
+      const midWalk = screens.walk.classList.contains("active")
+                   || screens.walkList.classList.contains("active");
+      if (midWalk) return;
+      reloaded = true;
+      window.location.reload();
+    });
   }
 }
 
