@@ -294,6 +294,15 @@ function init() {
 
   initWalk({
     lookup: (code) => COSTCO[code] || null,
+    lookupEan: (ean) => {
+      // Catalogue barcodes are EAN-13 / UPC-A / EAN-8; a gun may hand back a
+      // zero-padded GTIN-14 or a UPC-A read as EAN-13.
+      const bare = ean.replace(/^0+/, "");
+      for (const p of PRODUCTS) {
+        if (p.b === ean || p.b.replace(/^0+/, "") === bare) return p;
+      }
+      return null;
+    },
     built: () => BUILT,
     showScreen,
   });

@@ -119,6 +119,13 @@
                       border: 1px solid var(--line); background: var(--panel); color: var(--text); }
   .walkManual button { font-size: 15px; padding: 10px 14px; border-radius: 10px; border: 0;
                        background: var(--panel); color: var(--accent); }
+  #gunPanel { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  .gun-prompt { font-size: 16px; padding: 12px 14px; border-radius: 10px; background: var(--panel); }
+  .gun-prompt.bad { background: #8f2a2a; }
+  #gunInput { margin-top: 8px; width: 100%; font-size: 13px; padding: 6px 10px; border-radius: 8px;
+              border: 1px dashed var(--line); background: transparent; color: var(--dim);
+              font-family: Menlo, Consolas, monospace; }
+  #gunInput:focus { border-color: var(--accent); outline: none; }
   #walkSummary { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; }
   .chip { font-size: 12px; padding: 4px 8px; border-radius: 999px; background: var(--panel); }
   .chip.ok { background: #1f6b3a; } .chip.warn { background: #8a5a0c; } .chip.bad { background: #8f2a2a; }
@@ -172,7 +179,8 @@
 <section id="walk" class="screen">
   <div class="walkBar">
     <button id="walkBack">‹ Back</button>
-    <div class="title">Costco walk · scan the shelf sign</div>
+    <div class="title">Costco walk</div>
+    <button id="walkMode">Gun</button>
     <button id="walkListBtn">List (0)</button>
   </div>
   <div id="walkCam">
@@ -180,8 +188,13 @@
     <button id="walkStart">Start camera</button>
     <div id="walkMsg"></div>
   </div>
+  <div id="gunPanel" style="display:none">
+    <div id="gunPrompt" class="gun-prompt">Ready. Scan the barcode in the corner of a shelf sign.</div>
+    <input id="gunInput" type="text" inputmode="none" autocomplete="off" autocapitalize="off"
+           autocorrect="off" spellcheck="false" placeholder="scanner input" aria-label="Scanner input">
+  </div>
   <div id="walkResult" class="walk-result"></div>
-  <div class="walkManual">
+  <div class="walkManual" id="walkManualWrap">
     <input id="walkManual" type="text" inputmode="numeric" placeholder="Or type the item number"
            autocomplete="off" enterkeyhint="done">
     <button id="walkManualGo">Check</button>
