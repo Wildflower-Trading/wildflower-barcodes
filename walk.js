@@ -302,9 +302,7 @@ function csvOf(all) {
   return rows.map((row) => row.map(q).join(",")).join("\r\n") + "\r\n";
 }
 
-async function exportWalk() {
-  const all = (await dbAll()).sort((a, b) => (a.ts < b.ts ? -1 : 1));
-  if (!all.length) { $("walkListMsg").textContent = "Nothing to export."; return; }
+function exportFiles(all) {
   const day = new Date().toISOString().slice(0, 10);
   const payload = {
     kind: "wildflower-costco-walk",
@@ -314,9 +312,37 @@ async function exportWalk() {
     count: all.length,
     scans: all,
   };
-  const json = new File([JSON.stringify(payload)], `costco-walk-${day}.json`, { type: "application/json" });
-  const csv = new File([csvOf(all)], `costco-walk-${day}.csv`, { type: "text/csv" });
-  const files = [json, csv];
+  return [
+    new File([JSON.stringify(payload)], `costco-walk-${day}.json`, { type: "application/json" }),
+    new File([csvOf(all)], `costco-walk-${day}.csv`, { type: "text/csv" }),
+  ];
+}
+
+function downloadFiles(files) {
+  for (const f of files) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(f);
+    a.download = f.name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  }
+}
+
+/* Always saves the two files into the device's Downloads folder, for a
+   handheld with no email or share target: upload them from Chrome afterwards. */
+async function downloadWalk() {
+  const all = (await dbAll()).sort((a, b) => (a.ts < b.ts ? -1 : 1));
+  if (!all.length) { $("walkListMsg").textContent = "Nothing to download."; return; }
+  downloadFiles(exportFiles(all));
+  $("walkListMsg").textContent = `Saved ${all.length} scans to this device's Downloads folder (JSON and CSV).`;
+}
+
+async function exportWalk() {
+  const all = (await dbAll()).sort((a, b) => (a.ts < b.ts ? -1 : 1));
+  if (!all.length) { $("walkListMsg").textContent = "Nothing to export."; return; }
+  const day = new Date().toISOString().slice(0, 10);
+  const files = exportFiles(all);
   try {
     if (navigator.canShare && navigator.canShare({ files })) {
       await navigator.share({ files, title: `Costco walk ${day}` });
@@ -327,14 +353,7 @@ async function exportWalk() {
     if (e && e.name === "AbortError") return;   // user closed the share sheet
   }
   // Fallback: plain downloads.
-  for (const f of files) {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(f);
-    a.download = f.name;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
-  }
+  downloadFiles(files);
   $("walkListMsg").textContent = `Downloaded ${all.length} scans.`;
 }
 
@@ -410,6 +429,7 @@ export function initWalk(context) {
   });
 
   $("walkExport").addEventListener("click", exportWalk);
+  $("walkDownload").addEventListener("click", downloadWalk);
 
   $("walkClear").addEventListener("click", async () => {
     const all = await dbAll();
