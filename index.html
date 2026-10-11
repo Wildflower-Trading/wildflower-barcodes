@@ -126,12 +126,16 @@
   .walk-row { display: flex; gap: 10px; align-items: center; border-left: 4px solid var(--line); }
   .walk-row.ok { border-left-color: #2f9e55; } .walk-row.warn { border-left-color: #d08a1a; }
   .walk-row.bad { border-left-color: #d84a4a; }
-  .walk-row .noimg { width: 64px; height: 48px; object-fit: cover; border-radius: 6px;
+  .walk-row img, .walk-row .noimg { width: 64px; height: 48px; object-fit: cover; border-radius: 6px;
                                     background: var(--panel); flex: 0 0 64px; }
   .walk-row .noimg { font-size: 11px; color: var(--dim); display: flex; align-items: center; justify-content: center; }
   .walk-row .body { flex: 1; min-width: 0; }
   .walk-row .body .m { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: inherit; }
   .walk-row .del { background: none; border: 0; color: var(--dim); font-size: 22px; padding: 4px 8px; }
+  .photo-row { display: flex; align-items: center; gap: 10px; margin: 4px 2px 8px; }
+  .photo-btn { font-size: 17px; font-weight: 600; padding: 12px 18px; border-radius: 10px; border: 0;
+               background: var(--panel); color: var(--accent); }
+  .sign-photo { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; }
   #walkListMsg { font-size: 13px; color: var(--dim); padding: 0 12px 6px; min-height: 18px; }
 </style>
 </head>
@@ -180,6 +184,7 @@
            autocorrect="off" spellcheck="false" placeholder="scanner input" aria-label="Scanner input">
   </div>
   <div id="walkResult" class="walk-result"></div>
+  <input id="walkPhotoInput" type="file" accept="image/*" capture="environment" hidden>
   <div class="walkManual" id="walkManualWrap">
     <input id="walkManual" type="text" inputmode="numeric" placeholder="Or type the item number"
            autocomplete="off" enterkeyhint="done">

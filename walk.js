@@ -13,11 +13,21 @@
    asks for a second scan of the product's own barcode: that EAN either matches
    a product we already hold (so the Costco code just needs updating in
    Linnworks) or it does not (a genuinely new line). Everything is saved on the
-   device; export when back on wi-fi. */
+   device; export when back on wi-fi.
+
+   Sign photos: after any scan an "Add photo" button opens the device camera. The
+   picture is shrunk on the device, kept in its own IndexedDB store (so the scan
+   list stays light), and sent to the office one photo per request before the scan
+   list, all under one walk id so a retry overwrites rather than duplicates. The
+   review puts each photo next to the Linnworks cost and the offer sheet. */
 
 const DB_NAME = "wf-walk";
-const DB_VER = 1;
+const DB_VER = 2;
 const STORE = "scans";
+const PHOTOS = "photos";          // { code, blob, ts }
+const WALK_ID_KEY = "wf.walk.id";
+const PHOTO_MAX_EDGE = 1600;      // long edge in pixels: sign text stays legible
+const PHOTO_QUALITY = 0.72;
 
 const STATUS = {
   held:    { label: "STOCKED",            hint: "held in the warehouse",         cls: "ok" },
@@ -31,6 +41,8 @@ let pendingUnknown = null;   // code waiting for a product-barcode scan (gun mod
 let wakeLock = null;
 let audio = null;
 let gunTimer = null;
+let photoFor = null;         // code the camera was opened for
+let listUrls = [];           // object URLs shown in the list, revoked on re-render
 
 const $ = (id) => document.getElementById(id);
 
@@ -44,16 +56,19 @@ function openDb() {
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: "code" });
       }
+      if (!db.objectStoreNames.contains(PHOTOS)) {
+        db.createObjectStore(PHOTOS, { keyPath: "code" });
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
 
-function tx(mode, fn) {
+function tx(mode, fn, store = STORE) {
   return openDb().then((db) => new Promise((resolve, reject) => {
-    const t = db.transaction(STORE, mode);
-    const req = fn(t.objectStore(STORE));
+    const t = db.transaction(store, mode);
+    const req = fn(t.objectStore(store));
     t.oncomplete = () => resolve(req && req.result !== undefined ? req.result : undefined);
     t.onerror = () => reject(t.error);
   }));
@@ -64,6 +79,11 @@ const dbGet = (code) => tx("readonly", (s) => s.get(code)).then((r) => r || null
 const dbPut = (rec) => tx("readwrite", (s) => s.put(rec));
 const dbDelete = (code) => tx("readwrite", (s) => s.delete(code));
 const dbClear = () => tx("readwrite", (s) => s.clear());
+const photoAll = () => tx("readonly", (s) => s.getAll(), PHOTOS).then((r) => r || []);
+const photoGet = (code) => tx("readonly", (s) => s.get(code), PHOTOS).then((r) => r || null);
+const photoPut = (rec) => tx("readwrite", (s) => s.put(rec), PHOTOS);
+const photoDelete = (code) => tx("readwrite", (s) => s.delete(code), PHOTOS);
+const photoClear = () => tx("readwrite", (s) => s.clear(), PHOTOS);
 
 /* ---------------------------------------------------------------- codes */
 
@@ -137,7 +157,19 @@ function eanLine(rec) {
        <span class="m">not in our catalogue either: a new line to consider</span></div>`;
 }
 
-function showResult(rec, repeat) {
+async function photoBlock(rec) {
+  const p = rec.photo ? await photoGet(rec.code) : null;
+  let img = "";
+  if (p) {
+    const url = URL.createObjectURL(p.blob);
+    img = `<img class="sign-photo" src="${url}" alt="Sign photo for ${esc(rec.code)}">`;
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+  return `<div class="photo-row">${img}<button class="photo-btn" data-photo="${esc(rec.code)}">${
+    p ? "Retake photo" : "Add photo"}</button></div>`;
+}
+
+async function showResult(rec, repeat) {
   const st = STATUS[rec.status];
   const card = $("walkResult");
   card.className = "walk-result " + st.cls;
@@ -148,7 +180,54 @@ function showResult(rec, repeat) {
     : `<div class="sku"><span class="m">Nothing in Linnworks carries item ${esc(rec.code)}.</span></div>`;
   card.innerHTML =
     `<div class="band">${st.label}<span class="code">${esc(rec.code)}</span>${repeat ? '<span class="rep">already scanned</span>' : ""}</div>
-     <div class="hint">${st.hint}</div>${lines}${eanLine(rec)}`;
+     <div class="hint">${st.hint}</div>${await photoBlock(rec)}${lines}${eanLine(rec)}`;
+}
+
+/* ---------------------------------------------------------------- photos */
+
+function openCamera(code) {
+  photoFor = code;
+  const inp = $("walkPhotoInput");
+  inp.value = "";
+  inp.click();
+}
+
+/* Shrink to PHOTO_MAX_EDGE on the long edge as JPEG. createImageBitmap honours the
+   EXIF orientation, so a portrait shot stays portrait. */
+async function shrink(file) {
+  let bmp;
+  try {
+    bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch (e) {
+    bmp = await createImageBitmap(file);
+  }
+  const scale = Math.min(1, PHOTO_MAX_EDGE / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(bmp.width * scale);
+  c.height = Math.round(bmp.height * scale);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  if (bmp.close) bmp.close();
+  return new Promise((resolve, reject) =>
+    c.toBlob((b) => (b ? resolve(b) : reject(new Error("could not encode photo"))), "image/jpeg", PHOTO_QUALITY));
+}
+
+async function handlePhotoFile(file) {
+  const code = photoFor;
+  photoFor = null;
+  if (!file || !code) { gunFocus(); return; }
+  const rec = await dbGet(code);
+  if (!rec) { gunFocus(); return; }
+  try {
+    const blob = await shrink(file);
+    await photoPut({ code, blob, ts: new Date().toISOString() });
+    rec.photo = true;
+    await dbPut(rec);
+    beep("ean");
+    await showResult(rec, false);
+  } catch (e) {
+    $("gunPrompt").textContent = "That photo could not be saved. Try again.";
+  }
+  gunFocus();
 }
 
 function setGunPrompt() {
@@ -172,7 +251,7 @@ async function handleCode(raw, source) {
   if (existing) {
     existing.seen = (existing.seen || 1) + 1;
     await dbPut(existing);
-    showResult(existing, true);
+    await showResult(existing, true);
     beep(existing.status);
     if (existing.status === "unknown" && !existing.ean) pendingUnknown = code;
     setGunPrompt();
@@ -191,7 +270,7 @@ async function handleCode(raw, source) {
     seen: 1,
   };
   await dbPut(rec);
-  showResult(rec, false);
+  await showResult(rec, false);
   beep(status);
   if (status === "unknown") pendingUnknown = code;
   setGunPrompt();
@@ -209,7 +288,7 @@ async function handleEan(ean) {
   rec.ean_sku = p ? p.s : null;
   rec.ean_title = p ? p.t : null;
   await dbPut(rec);
-  showResult(rec, false);
+  await showResult(rec, false);
   beep("ean");
   setGunPrompt();
 }
@@ -256,10 +335,15 @@ async function refreshCount() {
 
 async function renderList() {
   const all = (await dbAll()).sort((a, b) => (a.ts < b.ts ? 1 : -1));
+  for (const u of listUrls) URL.revokeObjectURL(u);
+  listUrls = [];
+  const photos = {};
+  for (const p of await photoAll()) photos[p.code] = p;
   const counts = { held: 0, cpick: 0, zero: 0, unknown: 0 };
   for (const r of all) counts[r.status] = (counts[r.status] || 0) + 1;
   $("walkSummary").innerHTML = Object.keys(STATUS).map((k) =>
-    `<span class="chip ${STATUS[k].cls}">${STATUS[k].label} ${counts[k] || 0}</span>`).join("");
+    `<span class="chip ${STATUS[k].cls}">${STATUS[k].label} ${counts[k] || 0}</span>`).join("") +
+    `<span class="chip">PHOTOS ${Object.keys(photos).length}</span>`;
   const list = $("walkRows");
   if (!all.length) {
     list.innerHTML = `<div class="empty">Nothing scanned yet.</div>`;
@@ -275,8 +359,14 @@ async function renderList() {
     const held = first
       ? "held " + r.skus.reduce((a, e) => a + e.held, 0) + " · Costco pick " + r.skus.reduce((a, e) => a + (e.qc || 0), 0)
       : "";
+    let img = `<div class="noimg">${r.source === "typed" ? "typed" : "gun"}</div>`;
+    if (photos[r.code]) {
+      const url = URL.createObjectURL(photos[r.code].blob);
+      listUrls.push(url);
+      img = `<img src="${url}" alt="">`;
+    }
     return `<div class="row walk-row ${STATUS[r.status].cls}" data-code="${esc(r.code)}">
-      <div class="noimg">${r.source === "typed" ? "typed" : "gun"}</div>
+      ${img}
       <div class="body">
         <div class="t">${esc(r.code)} · ${STATUS[r.status].label}</div>
         <div class="m">${desc}</div>
@@ -303,15 +393,33 @@ function csvOf(all) {
   return rows.map((row) => row.map(q).join(",")).join("\r\n") + "\r\n";
 }
 
-function exportFiles(all) {
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",", 2)[1]);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+/* Fallback files carry the photos inline, so a walk that goes home by download or
+   share loses nothing. Send to office sends them separately instead. */
+async function exportFiles(all) {
   const day = new Date().toISOString().slice(0, 10);
+  const photos = {};
+  for (const p of await photoAll()) photos[p.code] = p;
+  const scans = [];
+  for (const r of all) {
+    const p = photos[r.code];
+    scans.push(p ? Object.assign({}, r, { thumb: "data:image/jpeg;base64," + await blobToBase64(p.blob) }) : r);
+  }
   const payload = {
     kind: "wildflower-costco-walk",
-    v: 2,
+    v: 3,
     exported: new Date().toISOString(),
     catalogue_built: ctx.built(),
     count: all.length,
-    scans: all,
+    scans,
   };
   return [
     new File([JSON.stringify(payload)], `costco-walk-${day}.json`, { type: "application/json" }),
@@ -335,7 +443,7 @@ function downloadFiles(files) {
 async function downloadWalk() {
   const all = (await dbAll()).sort((a, b) => (a.ts < b.ts ? -1 : 1));
   if (!all.length) { $("walkListMsg").textContent = "Nothing to download."; return; }
-  downloadFiles(exportFiles(all));
+  downloadFiles(await exportFiles(all));
   $("walkListMsg").textContent = `Saved ${all.length} scans to this device's Downloads folder (JSON and CSV).`;
 }
 
@@ -343,7 +451,7 @@ async function exportWalk() {
   const all = (await dbAll()).sort((a, b) => (a.ts < b.ts ? -1 : 1));
   if (!all.length) { $("walkListMsg").textContent = "Nothing to export."; return; }
   const day = new Date().toISOString().slice(0, 10);
-  const files = exportFiles(all);
+  const files = await exportFiles(all);
   try {
     if (navigator.canShare && navigator.canShare({ files })) {
       await navigator.share({ files, title: `Costco walk ${day}` });
@@ -364,6 +472,29 @@ const OFFICE_URL = "https://wildflower-gateway.tail9d1c28.ts.net/walk";
 
 /* Post the walk to the gateway, which saves it and runs the review. The
    handhelds have no email, so this is the normal way home for a walk. */
+function walkId() {
+  let id = null;
+  try { id = localStorage.getItem(WALK_ID_KEY); } catch (e) {}
+  if (!id) {
+    const rnd = Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(16).padStart(2, "0")).join("");
+    id = "walk-" + new Date().toISOString().slice(0, 10) + "-" + rnd;
+    try { localStorage.setItem(WALK_ID_KEY, id); } catch (e) {}
+  }
+  return id;
+}
+
+async function postSigned(url, payload) {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  const tag = await ctx.sign(bytes);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Walk-Mac": tag },
+    body: bytes,
+  });
+  const out = await res.json().catch(() => ({}));
+  return { res, out };
+}
+
 async function sendToOffice() {
   const msg = $("walkListMsg");
   const all = (await dbAll()).sort((a, b) => (a.ts < b.ts ? -1 : 1));
@@ -371,31 +502,38 @@ async function sendToOffice() {
   if (!navigator.onLine) { msg.textContent = "No connection. Try again on wi-fi; the scans are safe here."; return; }
   const btn = $("walkSend");
   btn.disabled = true;
-  msg.textContent = `Sending ${all.length} scans…`;
+  const id = walkId();
   try {
-    const payload = {
-      kind: "wildflower-costco-walk", v: 2,
+    // Photos first, one per request, so no request is large and a failure part
+    // way is retried cleanly (the gateway overwrites by walk id and item number).
+    const photos = await photoAll();
+    for (let i = 0; i < photos.length; i++) {
+      msg.textContent = `Sending photo ${i + 1} of ${photos.length}…`;
+      const { res } = await postSigned(OFFICE_URL + "/photo", {
+        kind: "wildflower-costco-walk-photo", walk_id: id, code: photos[i].code,
+        jpeg: await blobToBase64(photos[i].blob),
+      });
+      if (res.status === 401) throw new Error("REFUSED");
+      if (!res.ok) throw new Error("PHOTO_" + res.status);
+    }
+    msg.textContent = `Sending ${all.length} scans…`;
+    const { res, out } = await postSigned(OFFICE_URL, {
+      kind: "wildflower-costco-walk", v: 3, walk_id: id,
       exported: new Date().toISOString(), catalogue_built: ctx.built(),
-      count: all.length, scans: all,
-    };
-    const bytes = new TextEncoder().encode(JSON.stringify(payload));
-    const tag = await ctx.sign(bytes);
-    const res = await fetch(OFFICE_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Walk-Mac": tag },
-      body: bytes,
+      count: all.length, photos: photos.length, scans: all,
     });
-    const out = await res.json().catch(() => ({}));
     if (res.ok && out.ok) {
-      msg.textContent = `Office has it: ${out.scans} scans received. The review runs by itself.`;
+      msg.textContent = `Office has it: ${out.scans} scans and ${photos.length} photos received. The review runs by itself.`;
     } else if (res.status === 401) {
       msg.textContent = "The office refused it (passcode mismatch). Re-enter the passcode on the search screen and try again.";
     } else {
       msg.textContent = `The office could not take it (HTTP ${res.status}). Scans are still safe here.`;
     }
   } catch (e) {
-    msg.textContent = e && e.message === "NO_PASSCODE"
-      ? "Unlock the catalogue first, then send again."
+    const m = e && e.message;
+    msg.textContent = m === "NO_PASSCODE" ? "Unlock the catalogue first, then send again."
+      : m === "REFUSED" ? "The office refused it (passcode mismatch). Re-enter the passcode on the search screen and try again."
+      : m && m.startsWith("PHOTO_") ? `A photo could not be sent (HTTP ${m.slice(6)}). Try again; nothing is lost.`
       : "Could not reach the office. Check wi-fi and try again; the scans are safe here.";
   } finally {
     btn.disabled = false;
@@ -444,6 +582,14 @@ export function initWalk(context) {
   });
   $("gunPanel").addEventListener("click", gunFocus);
 
+  $("walkResult").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-photo]");
+    if (b) openCamera(b.dataset.photo);
+  });
+  $("walkPhotoInput").addEventListener("change", (e) => {
+    handlePhotoFile(e.target.files && e.target.files[0]);
+  });
+
   $("walkManualGo").addEventListener("click", () => {
     const v = $("walkManual").value;
     $("walkManual").value = "";
@@ -469,6 +615,7 @@ export function initWalk(context) {
     const btn = e.target.closest("[data-del]");
     if (!btn) return;
     await dbDelete(btn.dataset.del);
+    await photoDelete(btn.dataset.del);
     await renderList();
     refreshCount();
   });
@@ -480,8 +627,10 @@ export function initWalk(context) {
   $("walkClear").addEventListener("click", async () => {
     const all = await dbAll();
     if (!all.length) return;
-    if (!confirm(`Delete all ${all.length} scans from this device? Export first if you have not.`)) return;
+    if (!confirm(`Delete all ${all.length} scans and their photos from this device? Send or export first if you have not.`)) return;
     await dbClear();
+    await photoClear();
+    try { localStorage.removeItem(WALK_ID_KEY); } catch (e) {}
     await renderList();
     refreshCount();
   });
