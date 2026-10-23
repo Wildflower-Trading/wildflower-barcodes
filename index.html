@@ -82,6 +82,10 @@
      Sized so the rotated result fits both the height and the width. */
   #code.rot #svgWrap { width: min(74vh, 190vw); transform: rotate(90deg); }
   #code.rot #showMeta, #code.rot #tip { display: none; }
+  #showStock { white-space: pre-line; font-size: 17px; line-height: 1.5; color: #111; text-align: center;
+               margin: 0 0 18px; }
+  #code.rot #showStock { display: none; }
+  .row .m.stock { font-family: inherit; color: var(--text); opacity: .85; }
   #showMeta { margin-top: 14px; font-size: 12px; color: #666; text-align: center; }
   #tip { margin-top: 6px; font-size: 11px; color: #999; text-align: center; }
 
@@ -166,6 +170,7 @@
     <button id="rotate">Rotate</button>
   </div>
   <div id="code">
+    <div id="showStock"></div>
     <div id="svgWrap"></div>
     <div id="showMeta"></div>
     <div id="tip">Turn screen brightness fully up. Hold flat, 10–15cm from the scanner.</div>

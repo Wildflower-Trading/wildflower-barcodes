@@ -7,6 +7,7 @@ const MAC_SALT = "wildflower-barcodes-mac";
 
 let PRODUCTS = [];
 let COSTCO = {};
+let STOCK_ERR = null;   // set when the morning stock snapshot failed
 let BUILT = null;
 
 const $ = (id) => document.getElementById(id);
@@ -82,6 +83,7 @@ function loadLocal() {
     PRODUCTS = data.products || [];
     COSTCO = data.costco || {};
     BUILT = data.built || null;
+    STOCK_ERR = data.stock_error || null;
     return PRODUCTS.length > 0;
   } catch (e) {
     return false;
@@ -91,7 +93,8 @@ function loadLocal() {
 function saveLocal(data) {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(
-      { built: data.built, count: data.count, products: data.products, costco: data.costco || {} }));
+      { built: data.built, count: data.count, products: data.products, costco: data.costco || {},
+        stock_error: data.stock_error || null }));
   } catch (e) {
     console.warn("could not persist catalogue", e);
   }
@@ -117,6 +120,7 @@ async function backgroundSync(pass) {
       PRODUCTS = data.products;
       COSTCO = data.costco || {};
       BUILT = data.built;
+      STOCK_ERR = data.stock_error || null;
       saveLocal(data);
       render($("q").value);
     }
@@ -147,7 +151,8 @@ function search(query) {
 
   for (const p of PRODUCTS) {
     // A numeric query is almost always someone reading a barcode off a label.
-    if (digits.length >= 4 && p.b.includes(digits)) { out.push(p); continue; }
+    if (digits.length >= 4 && p.b && (p.b.includes(digits) ||
+        (digits.length >= 8 && p.b.replace(/^0+/, "") === digits.replace(/^0+/, "")))) { out.push(p); continue; }
     const hay = (p.t + " " + p.s).toLowerCase();
     let all = true;
     for (const t of terms) { if (!hay.includes(t)) { all = false; break; } }
@@ -155,6 +160,40 @@ function search(query) {
     if (out.length >= 300) break;
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ stock */
+
+/* The catalogue carries a stock snapshot taken when it was built (06:30 daily).
+   k = { h: units on our own shelves, p: units in a Costco / Booker pick bin (not
+   stock we hold), o: committed to open orders, d: on purchase orders, l: shelf bins }. */
+function snapshotTime() {
+  if (!BUILT) return "";
+  const d = new Date(BUILT);
+  const t = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const today = new Date().toDateString() === d.toDateString();
+  return today ? t : d.toLocaleDateString("en-GB", { day: "numeric", month: "short" }) + " " + t;
+}
+
+function stockShort(p) {
+  if (STOCK_ERR || !p.k) return "stock n/a";
+  const k = p.k;
+  const bits = [k.h ? `stock ${k.h}` : "no stock"];
+  if (k.p) bits.push(`supplier bin ${k.p}`);
+  if (k.o) bits.push(`${k.o} on orders`);
+  return bits.join(" · ");
+}
+
+function stockLong(p) {
+  if (STOCK_ERR || !p.k) return "Stock figures unavailable in this morning's catalogue.";
+  const k = p.k;
+  const lines = [];
+  lines.push(k.h ? `On our shelves: ${k.h}${k.l ? " (" + k.l + ")" : ""}` : "On our shelves: none");
+  if (k.p) lines.push(`Costco / Booker pick bin: ${k.p}`);
+  if (k.o) lines.push(`Committed to open orders: ${k.o}`);
+  if (k.d) lines.push(`On purchase orders: ${k.d}`);
+  lines.push(`As of ${snapshotTime()}`);
+  return lines.join("\n");
 }
 
 function render(query) {
@@ -172,7 +211,8 @@ function render(query) {
   results.innerHTML = hits.map((p, i) =>
     `<div class="row" data-i="${PRODUCTS.indexOf(p)}">
        <div class="t">${escapeHtml(p.t)}</div>
-       <div class="m">${p.b} · ${escapeHtml(p.s)}</div>
+       <div class="m">${p.b || "no barcode"} · ${escapeHtml(p.s)}</div>
+       <div class="m stock">${escapeHtml(stockShort(p))}</div>
      </div>`).join("");
   results.scrollTop = 0;
 }
@@ -197,7 +237,21 @@ function paintBarcode() {
 
 async function openBarcode(p) {
   currentProduct = p;
-  $("showTitle").textContent = p.t;
+  $("showTitle").textContent = p.t || p.s;
+  $("showStock").textContent = stockLong(p);
+  if (!p.b) {
+    // Searchable by name, but Linnworks holds no barcode a till would accept.
+    rotated = false;
+    $("code").classList.remove("rot");
+    $("svgWrap").innerHTML = "";
+    $("rotate").style.visibility = "hidden";
+    $("showMeta").textContent = `${p.s} · no usable barcode in Linnworks (${p.x || "missing"})`;
+    $("tip").style.display = "none";
+    showScreen("show");
+    return;
+  }
+  $("rotate").style.visibility = "";
+  $("tip").style.display = "";
   paintBarcode();
   const label = { EAN13: "EAN-13", UPCA: "UPC-A", EAN8: "EAN-8" }[p.y] || p.y;
   // p.d means the retail barcode was reconstructed from an outer-case code in
@@ -215,6 +269,10 @@ async function openBarcode(p) {
 async function closeBarcode() {
   showScreen("search");
   if (wakeLock) { try { await wakeLock.release(); } catch (e) {} wakeLock = null; }
+  // Ready for the next scan: the gun's text replaces what is there.
+  const q = $("q");
+  q.focus();
+  q.select();
 }
 
 /* ------------------------------------------------------------------ boot */
@@ -240,6 +298,7 @@ async function attemptUnlock(pass) {
     PRODUCTS = data.products;
     COSTCO = data.costco || {};
     BUILT = data.built;
+    STOCK_ERR = data.stock_error || null;
     saveLocal(data);
     await start(pass);
   } catch (e) {
@@ -259,6 +318,20 @@ function init() {
   });
   $("passcode").addEventListener("keydown", (e) => {
     if (e.key === "Enter") $("unlockBtn").click();
+  });
+
+  $("q").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const v = e.target.value.trim();
+    const digits = v.replace(/\D/g, "");
+    if (digits.length >= 8 && digits === v) {
+      const want = digits.replace(/^0+/, "");
+      const hits = PRODUCTS.filter((p) => p.b && p.b.replace(/^0+/, "") === want);
+      clearTimeout(searchTimer);
+      render(v);
+      e.target.select();          // the next scan replaces this one
+      if (hits.length === 1) openBarcode(hits[0]);
+    }
   });
 
   $("q").addEventListener("input", (e) => {
