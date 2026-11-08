@@ -86,6 +86,17 @@
                margin: 0 0 18px; }
   #code.rot #showStock { display: none; }
   .row .m.stock { font-family: inherit; color: var(--text); opacity: .85; }
+  #restockBox { width: 100%; max-width: 520px; margin: 0 auto 14px; text-align: center; color: #111; }
+  #code.rot #restockBox { display: none; }
+  .restock-btn { font-size: 16px; font-weight: 600; padding: 10px 16px; margin: 4px; border-radius: 10px;
+                 border: 1px solid #0066cc; background: #fff; color: #0066cc; }
+  .restock-btn.go { background: #1f6b3a; border-color: #1f6b3a; color: #fff; }
+  .restock-card { border: 1px solid #ccc; border-radius: 12px; padding: 12px; text-align: left; }
+  .restock-sub { font-size: 13px; color: #555; margin: 4px 0; }
+  #restockPanel .restock-sub { color: var(--dim); }
+  #restockPanel .restock-btn { background: var(--panel); color: var(--accent); border-color: var(--line); }
+  .restock-msg { font-size: 15px; padding: 10px; border-radius: 10px; background: #f2f4f7; text-align: left; }
+  .restock-msg.ok { background: #e3f4e8; } .restock-msg.bad { background: #fbe7e7; }
   #showMeta { margin-top: 14px; font-size: 12px; color: #666; text-align: center; }
   #tip { margin-top: 6px; font-size: 11px; color: #999; text-align: center; }
 
@@ -158,7 +169,7 @@
   <header>
     <input id="q" type="search" placeholder="Search product or barcode"
            autocomplete="off" autocapitalize="off" autocorrect="off" enterkeyhint="search">
-    <div id="meta"><span id="status"></span><span><button id="walkOpen">Costco walk</button> &nbsp; <button id="resync">Sync now</button></span></div>
+    <div id="meta"><span id="status"></span><span><button id="restockSetup" style="display:none">Restock setup</button> &nbsp; <button id="walkOpen">Costco walk</button> &nbsp; <button id="resync">Sync now</button></span></div>
   </header>
   <div id="results"></div>
 </section>
@@ -171,10 +182,20 @@
   </div>
   <div id="code">
     <div id="showStock"></div>
+    <div id="restockBox"></div>
     <div id="svgWrap"></div>
     <div id="showMeta"></div>
     <div id="tip">Turn screen brightness fully up. Hold flat, 10–15cm from the scanner.</div>
   </div>
+</section>
+
+<section id="restockPanel" class="screen">
+  <div class="walkBar">
+    <button id="restockPanelBack">‹ Back</button>
+    <div class="title">Restocks</div>
+    <span></span>
+  </div>
+  <div id="restockPanelBody" style="padding: 10px 12px; overflow-y: auto;"></div>
 </section>
 
 <section id="walk" class="screen">

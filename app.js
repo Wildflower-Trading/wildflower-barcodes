@@ -1,5 +1,6 @@
 import { renderBarcode } from "./barcode.js";
 import { initWalk } from "./walk.js";
+import { initRestock, paintProduct } from "./restock.js";
 
 const STORE_KEY = "wf.catalogue.v1";
 const PASS_KEY = "wf.pass.v1";
@@ -12,7 +13,7 @@ let BUILT = null;
 
 const $ = (id) => document.getElementById(id);
 const screens = { unlock: $("unlock"), search: $("search"), show: $("show"),
-                  walk: $("walk"), walkList: $("walkList") };
+                  walk: $("walk"), walkList: $("walkList"), restockPanel: $("restockPanel") };
 
 function showScreen(name) {
   for (const [k, el] of Object.entries(screens)) el.classList.toggle("active", k === name);
@@ -239,6 +240,7 @@ async function openBarcode(p) {
   currentProduct = p;
   $("showTitle").textContent = p.t || p.s;
   $("showStock").textContent = stockLong(p);
+  paintProduct(p);
   if (!p.b) {
     // Searchable by name, but Linnworks holds no barcode a till would accept.
     rotated = false;
@@ -363,6 +365,13 @@ function init() {
     }
     const pass = localStorage.getItem(PASS_KEY);
     if (pass) { setStatus("Syncing…"); backgroundSync(pass); }
+  });
+
+  initRestock({
+    product: () => currentProduct,
+    showScreen,
+    findSku: (sku) => PRODUCTS.find((p) => p.s === sku) || null,
+    openProduct: (p) => openBarcode(p),
   });
 
   initWalk({
