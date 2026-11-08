@@ -1,6 +1,6 @@
 import { renderBarcode } from "./barcode.js";
 import { initWalk } from "./walk.js";
-import { initRestock, paintProduct } from "./restock.js";
+import { initRestock, paintProduct, costLines } from "./restock.js";
 
 const STORE_KEY = "wf.catalogue.v1";
 const PASS_KEY = "wf.pass.v1";
@@ -9,6 +9,7 @@ const MAC_SALT = "wildflower-barcodes-mac";
 let PRODUCTS = [];
 let COSTCO = {};
 let STOCK_ERR = null;   // set when the morning stock snapshot failed
+let COSTS = "none";     // "ok" when the catalogue carries supplier costs, "error" when they failed, "none" in an older catalogue
 let BUILT = null;
 
 const $ = (id) => document.getElementById(id);
@@ -85,6 +86,7 @@ function loadLocal() {
     COSTCO = data.costco || {};
     BUILT = data.built || null;
     STOCK_ERR = data.stock_error || null;
+    COSTS = !("cost_error" in data) ? "none" : data.cost_error ? "error" : "ok";
     return PRODUCTS.length > 0;
   } catch (e) {
     return false;
@@ -122,6 +124,7 @@ async function backgroundSync(pass) {
       COSTCO = data.costco || {};
       BUILT = data.built;
       STOCK_ERR = data.stock_error || null;
+      COSTS = !("cost_error" in data) ? "none" : data.cost_error ? "error" : "ok";
       saveLocal(data);
       render($("q").value);
     }
@@ -239,7 +242,8 @@ function paintBarcode() {
 async function openBarcode(p) {
   currentProduct = p;
   $("showTitle").textContent = p.t || p.s;
-  $("showStock").textContent = stockLong(p);
+  const cost = COSTS === "ok" ? costLines(p) : COSTS === "error" ? ["Supplier costs unavailable in this morning's catalogue."] : [];
+  $("showStock").textContent = stockLong(p) + (cost.length ? "\n\n" + cost.join("\n") : "");
   paintProduct(p);
   if (!p.b) {
     // Searchable by name, but Linnworks holds no barcode a till would accept.
@@ -301,6 +305,7 @@ async function attemptUnlock(pass) {
     COSTCO = data.costco || {};
     BUILT = data.built;
     STOCK_ERR = data.stock_error || null;
+    COSTS = !("cost_error" in data) ? "none" : data.cost_error ? "error" : "ok";
     saveLocal(data);
     await start(pass);
   } catch (e) {

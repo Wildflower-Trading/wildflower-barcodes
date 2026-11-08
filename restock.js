@@ -69,6 +69,44 @@ async function signedPost(action, payload) {
   return out;
 }
 
+/* ------------------------------------------------------------- supplier cost */
+
+/* The Supplier tab "Purchase price" for the product's Booker / Costco links, from
+   the morning catalogue: p.u = [[shop, code, cost, default 0/1, pack size], ...],
+   p.ds = the default supplier when it is not Booker or Costco. Ex VAT, per
+   Linnworks unit; Linnworks keeps no date against it. */
+const PLACEHOLDER = [0, 0.01, 1];
+
+function costNote(r) {
+  const [shop, , cost, , pack] = r;
+  const bits = [];
+  if (PLACEHOLDER.includes(cost)) bits.push("placeholder cost, not a real price");
+  else if (shop === "Costco" && Math.round(cost * 100) % 100 === 97) bits.push(".97 = Costco clearance price");
+  if (pack > 1) bits.push(`supplier pack ${pack}`);
+  return bits.length ? ` (${bits.join(", ")})` : "";
+}
+
+export function costLines(p) {
+  if (!p) return [];
+  const rows = p.u || [];
+  const out = [];
+  if (rows.length) {
+    out.push("Linnworks supplier cost (ex VAT, per our unit):");
+    for (const r of rows) {
+      out.push(`${r[0]}${r[1] ? " " + r[1] : ""}: £${Number(r[2]).toFixed(2)}${r[3] ? " default" : ""}${costNote(r)}`);
+    }
+  } else if (!p.ds) {
+    out.push("No Booker / Costco cost in Linnworks.");
+  }
+  if (p.ds) out.push(`Default supplier: ${p.ds} (not Booker / Costco)`);
+  return out;
+}
+
+function defaultCost(p) {
+  const r = ((p && p.u) || []).find((x) => x[3]);
+  return r ? `Linnworks cost £${Number(r[2]).toFixed(2)} (${r[0]}${r[1] ? " " + r[1] : ""})${costNote(r)}: check the shelf price ex VAT` : "";
+}
+
 /* ------------------------------------------------------------- product screen */
 
 function box(html) { $("restockBox").innerHTML = html; }
@@ -105,6 +143,7 @@ async function check(item, fromQueue) {
       <div><b>Book ${pv.book_in} into ${esc(pv.bin)}</b></div>
       <div class="restock-sub">${esc(pv.title || pv.sku)} · value £0${onSale} · seen ${esc(pv.seen_on)}</div>
       ${(pv.notes || []).map((n) => `<div class="restock-sub">${esc(n)}</div>`).join("")}
+      ${defaultCost(ctx.product()) ? `<div class="restock-sub restock-cost">${esc(defaultCost(ctx.product()))}</div>` : ""}
       <button class="restock-btn go" data-restock="book" data-token="${esc(pv.token)}" data-store="${esc(pv.store)}">
         Book ${pv.book_in}: seen at ${esc(pv.store)}</button>
       <button class="restock-btn" data-restock="cancel">Cancel</button>
