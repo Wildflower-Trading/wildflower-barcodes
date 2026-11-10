@@ -8,7 +8,11 @@
    passcode is never used for a restock. Two steps, both on the gateway: "check" asks
    the stock tool what it would book (bin, 12 units, value 0, or why not); "book"
    books exactly that after Jason confirms the store. With no signal the request is
-   queued and checked later: a sighting is valid for 2 working days. */
+   queued and checked later: a sighting is valid for 2 working days.
+
+   10 Nov 2026: a line with more than one Costco / Booker bin (The Wild Mushroom: Seasonings /
+   Spices and Catering Fruit / Choc / Juice) comes back with its bins; each is a button, and
+   the tapped bin is checked again by the stock tool before anything can be booked. */
 
 const OFFICE = "https://wildflower-gateway.tail9d1c28.ts.net/walk/restock/";
 const DEVICE_KEY = "wf.restock.device";
@@ -121,7 +125,8 @@ async function check(item, fromQueue) {
   box(`<div class="restock-msg">Checking ${esc(item.sku)} with the office…</div>`);
   let pv;
   try {
-    pv = await signedPost("preview", { sku: item.sku, seen_on: item.seen_on });
+    pv = await signedPost("preview", Object.assign({ sku: item.sku, seen_on: item.seen_on },
+      item.bin ? { bin: item.bin } : {}));
   } catch (e) {
     const m = String(e.message || "");
     if (m.startsWith("REFUSED:")) {
@@ -131,6 +136,12 @@ async function check(item, fromQueue) {
     if (!fromQueue) enqueue(item);
     box(`<div class="restock-msg">No connection. ${fromQueue ? "Still queued" : "Queued"}: it will be checked when you
          have signal (a sighting counts for 2 working days). Restocks (${queue().length}) on the search screen.</div>`);
+    return;
+  }
+  remember(item, fromQueue);
+  if (!pv.can_book && Array.isArray(pv.bins) && pv.bins.length > 1 && !item.bin) {
+    $("restockBox").dataset.bins = JSON.stringify(pv.bins);
+    paintBinChoice(pv.bins);
     return;
   }
   if (!pv.can_book) {
@@ -146,11 +157,27 @@ async function check(item, fromQueue) {
       ${defaultCost(ctx.product()) ? `<div class="restock-sub restock-cost">${esc(defaultCost(ctx.product()))}</div>` : ""}
       <button class="restock-btn go" data-restock="book" data-token="${esc(pv.token)}" data-store="${esc(pv.store)}">
         Book ${pv.book_in}: seen at ${esc(pv.store)}</button>
+      ${item.bin ? `<button class="restock-btn" data-restock="rebin">Other bin</button>` : ""}
       <button class="restock-btn" data-restock="cancel">Cancel</button>
     </div>`);
-  $("restockBox").dataset.sku = item.sku;
-  $("restockBox").dataset.seen = item.seen_on;
-  $("restockBox").dataset.queued = fromQueue ? "1" : "";
+}
+
+function remember(item, fromQueue) {
+  const d = $("restockBox").dataset;
+  d.sku = item.sku;
+  d.seen = item.seen_on;
+  d.title = item.title || "";
+  d.queued = fromQueue ? "1" : "";
+}
+
+function paintBinChoice(bins) {
+  box(`<div class="restock-card">
+      <div><b>Which bin?</b></div>
+      <div class="restock-sub">This line has ${bins.length} Costco / Booker bins in Linnworks. Tap the one to book 12 into.
+        Nothing is booked until you confirm on the next screen.</div>
+      ${bins.map((b) => `<button class="restock-btn restock-bin" data-restock="bin" data-bin="${esc(b)}">${esc(b)}</button>`).join("")}
+      <button class="restock-btn" data-restock="cancel">Cancel</button>
+    </div>`);
 }
 
 async function book(token, store) {
@@ -249,6 +276,12 @@ export function initRestock(context) {
     if (b.dataset.restock === "check" && p) check({ sku: p.s, title: p.t, seen_on: ukToday() }, false);
     else if (b.dataset.restock === "book") book(b.dataset.token, b.dataset.store);
     else if (b.dataset.restock === "cancel") paintProduct(p);
+    else if (b.dataset.restock === "bin") {
+      const d = $("restockBox").dataset;
+      check({ sku: d.sku, title: d.title, seen_on: d.seen, bin: b.dataset.bin }, d.queued === "1");
+    } else if (b.dataset.restock === "rebin") {
+      try { paintBinChoice(JSON.parse($("restockBox").dataset.bins || "[]")); } catch (err) { paintProduct(p); }
+    }
   });
   $("restockPanelBody").addEventListener("click", async (e) => {
     const c = e.target.closest("[data-qcheck]");
