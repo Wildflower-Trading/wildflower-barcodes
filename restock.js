@@ -12,7 +12,11 @@
 
    10 Nov 2026: a line with more than one Costco / Booker bin (The Wild Mushroom: Seasonings /
    Spices and Catering Fruit / Choc / Juice) comes back with its bins; each is a button, and
-   the tapped bin is checked again by the stock tool before anything can be booked. */
+   the tapped bin is checked again by the stock tool before anything can be booked.
+
+   "Other bin…" lists every Warehouse A bin on the line's default supplier side (C - for
+   Costco, B - for Booker) with a search box. A bin the line has no row in is booked as a
+   NEW bin: the stock tool makes the row, and refuses while the line's cost is a placeholder. */
 
 const OFFICE = "https://wildflower-gateway.tail9d1c28.ts.net/walk/restock/";
 const DEVICE_KEY = "wf.restock.device";
@@ -126,7 +130,7 @@ async function check(item, fromQueue) {
   let pv;
   try {
     pv = await signedPost("preview", Object.assign({ sku: item.sku, seen_on: item.seen_on },
-      item.bin ? { bin: item.bin } : {}));
+      item.bin ? { bin: item.bin } : {}, item.bin && item.new_bin ? { new_bin: true } : {}));
   } catch (e) {
     const m = String(e.message || "");
     if (m.startsWith("REFUSED:")) {
@@ -146,24 +150,28 @@ async function check(item, fromQueue) {
   }
   if (!pv.can_book) {
     if (fromQueue) dequeue(item);
-    box(`<div class="restock-msg bad"><b>Not booked.</b> ${esc(pv.reason)}</div>`);
+    const noRow = /no [BC] - bin row/.test(String(pv.reason || ""));
+    box(`<div class="restock-msg bad"><b>Not booked.</b> ${esc(pv.reason)}</div>
+         ${noRow || item.bin ? `<button class="restock-btn" data-restock="other">${noRow ? "Pick a bin" : "Other bin…"}</button>` : ""}`);
     return;
   }
   const onSale = pv.on_sale_now == null ? "" : ` · on sale now ${pv.on_sale_now}`;
   box(`<div class="restock-card">
       <div><b>Book ${pv.book_in} into ${esc(pv.bin)}</b></div>
+      ${pv.new_bin ? `<div class="restock-sub restock-new">NEW bin for this line: Linnworks will add it</div>` : ""}
       <div class="restock-sub">${esc(pv.title || pv.sku)} · value £0${onSale} · seen ${esc(pv.seen_on)}</div>
       ${(pv.notes || []).map((n) => `<div class="restock-sub">${esc(n)}</div>`).join("")}
       ${defaultCost(ctx.product()) ? `<div class="restock-sub restock-cost">${esc(defaultCost(ctx.product()))}</div>` : ""}
       <button class="restock-btn go" data-restock="book" data-token="${esc(pv.token)}" data-store="${esc(pv.store)}">
         Book ${pv.book_in}: seen at ${esc(pv.store)}</button>
-      ${item.bin ? `<button class="restock-btn" data-restock="rebin">Other bin</button>` : ""}
+      <button class="restock-btn" data-restock="rebin">Other bin</button>
       <button class="restock-btn" data-restock="cancel">Cancel</button>
     </div>`);
 }
 
 function remember(item, fromQueue) {
   const d = $("restockBox").dataset;
+  if (!item.bin && d.sku !== item.sku) d.bins = "";
   d.sku = item.sku;
   d.seen = item.seen_on;
   d.title = item.title || "";
@@ -176,8 +184,49 @@ function paintBinChoice(bins) {
       <div class="restock-sub">This line has ${bins.length} Costco / Booker bins in Linnworks. Tap the one to book 12 into.
         Nothing is booked until you confirm on the next screen.</div>
       ${bins.map((b) => `<button class="restock-btn restock-bin" data-restock="bin" data-bin="${esc(b)}">${esc(b)}</button>`).join("")}
+      <button class="restock-btn" data-restock="other">Other bin…</button>
       <button class="restock-btn" data-restock="cancel">Cancel</button>
     </div>`);
+}
+
+/* Every bin on the line's side, from Linnworks' own bin list, with a search box. */
+async function paintOtherBins() {
+  const d = $("restockBox").dataset;
+  box(`<div class="restock-msg">Fetching the bin list…</div>`);
+  let out;
+  try {
+    out = await signedPost("bins", { sku: d.sku });
+  } catch (e) {
+    box(`<div class="restock-msg bad">Could not reach the office for the bin list. Try again with signal.</div>
+         <button class="restock-btn" data-restock="cancel">Back</button>`);
+    return;
+  }
+  const bins = Array.isArray(out.bins) ? out.bins : [];
+  if (!bins.length) {
+    box(`<div class="restock-msg bad"><b>No bin list.</b> ${esc(out.reason || "nothing came back")}</div>
+         <button class="restock-btn" data-restock="cancel">Back</button>`);
+    return;
+  }
+  const has = new Set((out.has || []).map((b) => b.toLowerCase()));
+  box(`<div class="restock-card">
+      <div><b>All ${esc(out.store)} bins (${esc(out.side)} -)</b></div>
+      <div class="restock-sub">Tap the bin to book 12 into. A bin this line has never used becomes a NEW bin for it.
+        Nothing is booked until you confirm on the next screen.</div>
+      <input id="restockBinFilter" class="restock-filter" type="search" placeholder="Type to narrow, e.g. spice" autocomplete="off">
+      <div id="restockBinList">
+      ${bins.map((b) => `<button class="restock-btn restock-bin" data-restock="pick" data-bin="${esc(b)}"
+          data-new="${has.has(b.toLowerCase()) ? "" : "1"}" data-key="${esc(b.toLowerCase())}">${esc(b)}${
+          has.has(b.toLowerCase()) ? " · this line's bin" : ""}</button>`).join("")}
+      </div>
+      <button class="restock-btn" data-restock="cancel">Cancel</button>
+    </div>`);
+  const f = $("restockBinFilter");
+  f.addEventListener("input", () => {
+    const q = f.value.trim().toLowerCase();
+    $("restockBinList").querySelectorAll("[data-key]").forEach((el) => {
+      el.style.display = !q || el.dataset.key.includes(q) ? "" : "none";
+    });
+  });
 }
 
 async function book(token, store) {
@@ -279,8 +328,16 @@ export function initRestock(context) {
     else if (b.dataset.restock === "bin") {
       const d = $("restockBox").dataset;
       check({ sku: d.sku, title: d.title, seen_on: d.seen, bin: b.dataset.bin }, d.queued === "1");
+    } else if (b.dataset.restock === "pick") {
+      const d = $("restockBox").dataset;
+      check({ sku: d.sku, title: d.title, seen_on: d.seen, bin: b.dataset.bin, new_bin: b.dataset.new === "1" },
+        d.queued === "1");
+    } else if (b.dataset.restock === "other") {
+      paintOtherBins();
     } else if (b.dataset.restock === "rebin") {
-      try { paintBinChoice(JSON.parse($("restockBox").dataset.bins || "[]")); } catch (err) { paintProduct(p); }
+      let bins = [];
+      try { bins = JSON.parse($("restockBox").dataset.bins || "[]"); } catch (err) { bins = []; }
+      if (bins.length > 1) paintBinChoice(bins); else paintOtherBins();
     }
   });
   $("restockPanelBody").addEventListener("click", async (e) => {
