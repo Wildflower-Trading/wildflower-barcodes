@@ -413,6 +413,8 @@ function init() {
     $("passcode").focus();
   }
 
+  holdUpright();
+
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
     // A new build of the app takes over in the background. Reload once so
@@ -430,3 +432,36 @@ function init() {
 }
 
 init();
+
+
+/* Keep the app upright on the Zebra (17 Nov 2026, as the pick app). Three layers: the manifest
+   asks for portrait-primary; the first tap goes full screen and locks portrait-primary (Chrome
+   honours a lock only in full screen or an installed app); and if the screen still turns upside
+   down, the whole app is turned back by 180 degrees. Every step fails quietly on an iPhone. */
+function lockPortrait() {
+  try {
+    if (screen.orientation && screen.orientation.lock) screen.orientation.lock("portrait-primary").catch(() => {});
+  } catch (e) { /* not supported */ }
+}
+
+function holdUpright() {
+  const t = (screen.orientation && screen.orientation.type) || "";
+  const flipped = t === "portrait-secondary" || window.orientation === 180;
+  document.documentElement.classList.toggle("flip", !!flipped);
+}
+
+function fullscreenAndLock() {
+  const el = document.documentElement;
+  if (!document.fullscreenElement && el.requestFullscreen) {
+    el.requestFullscreen({ navigationUI: "hide" }).then(lockPortrait, lockPortrait);
+  } else {
+    lockPortrait();
+  }
+}
+
+if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener("change", holdUpright);
+window.addEventListener("orientationchange", holdUpright);
+window.addEventListener("resize", holdUpright);
+document.addEventListener("touchend", fullscreenAndLock, { passive: true });
+document.addEventListener("click", fullscreenAndLock);
+lockPortrait();

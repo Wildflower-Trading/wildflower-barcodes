@@ -11,6 +11,9 @@
 <meta name="theme-color" content="#101418">
 <link rel="apple-touch-icon" href="icon-180.png">
 <style>
+  /* 17 Nov 2026: if the Zebra still turns the screen upside down, the app turns itself back
+     (same as the pick app). */
+  html.flip body { position: fixed; inset: 0; overflow: auto; transform: rotate(180deg); transform-origin: 50% 50%; }
   :root {
     --bg: #101418; --panel: #1a2027; --line: #2a323c;
     --text: #eef2f6; --dim: #8d99a6; --accent: #4ea1ff;
