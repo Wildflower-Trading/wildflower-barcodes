@@ -121,7 +121,7 @@ function box(html) { $("restockBox").innerHTML = html; }
 
 export function paintProduct(p) {
   const dev = device();
-  if (!dev || !p) { box(""); return; }
+  if (!dev || !p || p.a) { box(""); return; }       // never offered on an archived product
   box(`<button class="restock-btn" data-restock="check">Restock 12</button>`);
 }
 

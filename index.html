@@ -88,7 +88,14 @@
   #showStock { white-space: pre-line; font-size: 17px; line-height: 1.5; color: #111; text-align: center;
                margin: 0 0 18px; }
   #code.rot #showStock { display: none; }
+  #code.rot #showArchived { display: none; }
   .row .m.stock { font-family: inherit; color: var(--text); opacity: .85; }
+  /* 20 Nov 2026: archived products show greyed, never as "not found". */
+  .row.archived { opacity: .6; }
+  .arch-tag { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 1px 6px;
+    border-radius: 6px; background: #8a8f98; color: #fff; vertical-align: middle; }
+  .arch-label { display: inline-block; margin: 6px auto 2px; padding: 4px 12px; border-radius: 8px;
+    background: #8a8f98; color: #fff; font-weight: 700; font-size: 15px; letter-spacing: .04em; }
   #restockBox { width: 100%; max-width: 520px; margin: 0 auto 14px; text-align: center; color: #111; }
   #code.rot #restockBox { display: none; }
   .restock-btn { font-size: 16px; font-weight: 600; padding: 10px 16px; margin: 4px; border-radius: 10px;
@@ -190,6 +197,7 @@
     <button id="rotate">Rotate</button>
   </div>
   <div id="code">
+    <div id="showArchived" class="arch-label" style="display:none">ARCHIVED in Linnworks</div>
     <div id="showStock"></div>
     <div id="restockBox"></div>
     <div id="svgWrap"></div>

@@ -110,7 +110,8 @@ function builtLabel() {
   const d = new Date(BUILT);
   const days = Math.floor((Date.now() - d.getTime()) / 86400000);
   const when = days === 0 ? "today" : days === 1 ? "yesterday" : days + " days ago";
-  return `${PRODUCTS.length} products · synced ${when}`;
+  const arch = PRODUCTS.filter((p) => p.a).length;
+  return `${PRODUCTS.length - arch} products${arch ? ` (+${arch} archived)` : ""} · synced ${when}`;
 }
 
 /* Refresh in the background whenever there is a network. Silent on failure -
@@ -180,6 +181,7 @@ function snapshotTime() {
 }
 
 function stockShort(p) {
+  if (p.a) return "archived in Linnworks";
   if (STOCK_ERR || !p.k) return "stock n/a";
   const k = p.k;
   const bits = [k.h ? `stock ${k.h}` : "no stock"];
@@ -189,6 +191,7 @@ function stockShort(p) {
 }
 
 function stockLong(p) {
+  if (p.a) return "Not on sale anywhere.\nUnarchive it in Linnworks before it can be restocked.";
   if (STOCK_ERR || !p.k) return "Stock figures unavailable in this morning's catalogue.";
   const k = p.k;
   const lines = [];
@@ -213,8 +216,8 @@ function render(query) {
     return;
   }
   results.innerHTML = hits.map((p, i) =>
-    `<div class="row" data-i="${PRODUCTS.indexOf(p)}">
-       <div class="t">${escapeHtml(p.t)}</div>
+    `<div class="row${p.a ? " archived" : ""}" data-i="${PRODUCTS.indexOf(p)}">
+       <div class="t">${p.a ? `<span class="arch-tag">ARCHIVED</span> ` : ""}${escapeHtml(p.t)}</div>
        <div class="m">${p.b || "no barcode"} · ${escapeHtml(p.s)}</div>
        <div class="m stock">${escapeHtml(stockShort(p))}</div>
      </div>`).join("");
@@ -242,7 +245,8 @@ function paintBarcode() {
 async function openBarcode(p) {
   currentProduct = p;
   $("showTitle").textContent = p.t || p.s;
-  const cost = COSTS === "ok" ? costLines(p) : COSTS === "error" ? ["Supplier costs unavailable in this morning's catalogue."] : [];
+  $("showArchived").style.display = p.a ? "" : "none";
+  const cost = p.a ? [] : COSTS === "ok" ? costLines(p) : COSTS === "error" ? ["Supplier costs unavailable in this morning's catalogue."] : [];
   $("showStock").textContent = stockLong(p) + (cost.length ? "\n\n" + cost.join("\n") : "");
   paintProduct(p);
   if (!p.b) {
@@ -333,7 +337,10 @@ function init() {
     const digits = v.replace(/\D/g, "");
     if (digits.length >= 8 && digits === v) {
       const want = digits.replace(/^0+/, "");
-      const hits = PRODUCTS.filter((p) => p.b && p.b.replace(/^0+/, "") === want);
+      const all = PRODUCTS.filter((p) => p.b && p.b.replace(/^0+/, "") === want);
+      // A live product wins over an archived one with the same barcode.
+      const live = all.filter((p) => !p.a);
+      const hits = live.length ? live : all;
       clearTimeout(searchTimer);
       render(v);
       e.target.select();          // the next scan replaces this one
@@ -384,8 +391,10 @@ function init() {
     lookupEan: (ean) => {
       // Catalogue barcodes are EAN-13 / UPC-A / EAN-8; a gun may hand back a
       // zero-padded GTIN-14 or a UPC-A read as EAN-13.
+      // Archived products are never matched on a walk: its lists stay as before.
       const bare = ean.replace(/^0+/, "");
       for (const p of PRODUCTS) {
+        if (p.a) continue;
         if (p.b === ean || p.b.replace(/^0+/, "") === bare) return p;
       }
       return null;
