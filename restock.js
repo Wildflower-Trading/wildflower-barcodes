@@ -16,7 +16,12 @@
 
    "Other bin…" lists every Warehouse A bin on the line's default supplier side (C - for
    Costco, B - for Booker) with a search box. A bin the line has no row in is booked as a
-   NEW bin: the stock tool makes the row, and refuses while the line's cost is a placeholder. */
+   NEW bin: the stock tool makes the row, and refuses while the line's cost is a placeholder.
+
+   20 Nov 2026: an ARCHIVED product offers "Unarchive in Linnworks". The office checks it first
+   (not replaced by a live product with the same barcode, cost not a placeholder, no Temu, SFP
+   or overseas Amazon listing that is not set to Ignore) and lists the channels that come back;
+   only after "Unarchive" is it written. Then Restock 12 works as usual. */
 
 const OFFICE = "https://wildflower-gateway.tail9d1c28.ts.net/walk/restock/";
 const DEVICE_KEY = "wf.restock.device";
@@ -121,7 +126,11 @@ function box(html) { $("restockBox").innerHTML = html; }
 
 export function paintProduct(p) {
   const dev = device();
-  if (!dev || !p || p.a) { box(""); return; }       // never offered on an archived product
+  if (!dev || !p) { box(""); return; }
+  if (p.a) {                                          // archived: offer the unarchive, never a restock
+    box(`<button class="restock-btn" data-restock="unarchive-check">Unarchive in Linnworks</button>`);
+    return;
+  }
   box(`<button class="restock-btn" data-restock="check">Restock 12</button>`);
 }
 
@@ -187,6 +196,60 @@ function paintBinChoice(bins) {
       <button class="restock-btn" data-restock="other">Other bin…</button>
       <button class="restock-btn" data-restock="cancel">Cancel</button>
     </div>`);
+}
+
+/* ------------------------------------------------------------- unarchive */
+
+async function unarchiveCheck(p) {
+  box(`<div class="restock-msg">Checking ${esc(p.s)} with the office…</div>`);
+  let pv;
+  try {
+    pv = await signedPost("unarchive_check", { sku: p.s });
+  } catch (e) {
+    const m = String(e.message || "");
+    box(`<div class="restock-msg bad">${m.startsWith("REFUSED:") ? "The office refused this device: " + esc(m.slice(8))
+      : "Could not reach the office: nothing was changed. Try again with signal."}</div>`);
+    return;
+  }
+  if (!pv.can_unarchive) {
+    box(`<div class="restock-msg bad"><b>Not unarchived.</b> ${esc(pv.reason)}</div>`);
+    return;
+  }
+  const back = (pv.comes_back || []).length
+    ? `Comes back on: <b>${(pv.comes_back || []).map(esc).join(", ")}</b>`
+    : "No channel listings come back with it.";
+  box(`<div class="restock-card">
+      <div><b>Unarchive ${esc(pv.title || pv.sku)}?</b></div>
+      <div class="restock-sub">${back}</div>
+      ${pv.cost != null ? `<div class="restock-sub restock-cost">Linnworks cost £${Number(pv.cost).toFixed(2)} (${esc(pv.store || "")})${
+        Math.abs(Number(pv.cost) - 1) < 0.001 ? `: <span class="restock-new">£1.00 is usually a placeholder, check it before restocking</span>` : ""}</div>` : ""}
+      <div class="restock-sub">Listings and prices are as they were when it was archived.${
+        pv.ignored_links ? ` ${pv.ignored_links} other listing${pv.ignored_links > 1 ? "s stay" : " stays"} on Ignore.` : ""}
+        Nothing goes on sale until you restock it.</div>
+      <button class="restock-btn go" data-restock="unarchive-go" data-token="${esc(pv.token)}">Unarchive</button>
+      <button class="restock-btn" data-restock="cancel">Cancel</button>
+    </div>`);
+}
+
+async function unarchiveGo(token) {
+  const p = ctx.product();
+  box(`<div class="restock-msg">Unarchiving…</div>`);
+  let cm;
+  try {
+    cm = await signedPost("unarchive_commit", { token });
+  } catch (e) {
+    box(`<div class="restock-msg bad">Could not reach the office: it may or may not have gone through. Check it again.</div>`);
+    return;
+  }
+  if (!cm.unarchived) {
+    box(`<div class="restock-msg bad"><b>Not unarchived.</b> ${esc(cm.reason)}</div>`);
+    return;
+  }
+  if (p) ctx.unarchived(p);
+  box(`<div class="restock-msg ${cm.deleted_flag_cleared ? "ok" : "bad"}"><b>Unarchived in Linnworks.</b> ${
+      cm.deleted_flag_cleared ? "Restock it now if you want it back on sale."
+      : "But Linnworks still marks it deleted, so Restock will not find it: check it in Linnworks."}</div>
+     ${cm.deleted_flag_cleared ? `<button class="restock-btn" data-restock="check">Restock 12</button>` : ""}`);
 }
 
 /* Every bin on the line's side, from Linnworks' own bin list, with a search box. */
@@ -332,6 +395,10 @@ export function initRestock(context) {
       const d = $("restockBox").dataset;
       check({ sku: d.sku, title: d.title, seen_on: d.seen, bin: b.dataset.bin, new_bin: b.dataset.new === "1" },
         d.queued === "1");
+    } else if (b.dataset.restock === "unarchive-check" && p) {
+      unarchiveCheck(p);
+    } else if (b.dataset.restock === "unarchive-go") {
+      unarchiveGo(b.dataset.token);
     } else if (b.dataset.restock === "other") {
       paintOtherBins();
     } else if (b.dataset.restock === "rebin") {

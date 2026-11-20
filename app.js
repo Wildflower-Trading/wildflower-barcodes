@@ -11,6 +11,23 @@ let COSTCO = {};
 let STOCK_ERR = null;   // set when the morning stock snapshot failed
 let COSTS = "none";     // "ok" when the catalogue carries supplier costs, "error" when they failed, "none" in an older catalogue
 let BUILT = null;
+const UNARCH_KEY = "wf.unarchived";   // SKU -> when this device unarchived it (20 Nov 2026)
+
+/* An unarchive shows at once, not only after the next 06:30 catalogue: a product this device
+   unarchived after the catalogue was built is treated as live. */
+function applyUnarchived() {
+  let o = {};
+  try { o = JSON.parse(localStorage.getItem(UNARCH_KEY) || "{}") || {}; } catch (e) { o = {}; }
+  for (const p of PRODUCTS) if (p.a && o[p.s] && (!BUILT || o[p.s] > BUILT)) p.a = 0;
+}
+
+function markUnarchived(p) {
+  let o = {};
+  try { o = JSON.parse(localStorage.getItem(UNARCH_KEY) || "{}") || {}; } catch (e) { o = {}; }
+  o[p.s] = new Date().toISOString();
+  try { localStorage.setItem(UNARCH_KEY, JSON.stringify(o)); } catch (e) {}
+  p.a = 0;
+}
 
 const $ = (id) => document.getElementById(id);
 const screens = { unlock: $("unlock"), search: $("search"), show: $("show"),
@@ -87,6 +104,7 @@ function loadLocal() {
     BUILT = data.built || null;
     STOCK_ERR = data.stock_error || null;
     COSTS = !("cost_error" in data) ? "none" : data.cost_error ? "error" : "ok";
+    applyUnarchived();
     return PRODUCTS.length > 0;
   } catch (e) {
     return false;
@@ -126,6 +144,7 @@ async function backgroundSync(pass) {
       BUILT = data.built;
       STOCK_ERR = data.stock_error || null;
       COSTS = !("cost_error" in data) ? "none" : data.cost_error ? "error" : "ok";
+      applyUnarchived();
       saveLocal(data);
       render($("q").value);
     }
@@ -310,6 +329,7 @@ async function attemptUnlock(pass) {
     BUILT = data.built;
     STOCK_ERR = data.stock_error || null;
     COSTS = !("cost_error" in data) ? "none" : data.cost_error ? "error" : "ok";
+    applyUnarchived();
     saveLocal(data);
     await start(pass);
   } catch (e) {
@@ -384,6 +404,7 @@ function init() {
     showScreen,
     findSku: (sku) => PRODUCTS.find((p) => p.s === sku) || null,
     openProduct: (p) => openBarcode(p),
+    unarchived: (p) => { markUnarchived(p); openBarcode(p); render($("q").value); },
   });
 
   initWalk({
